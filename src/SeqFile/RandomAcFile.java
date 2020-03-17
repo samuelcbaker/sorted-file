@@ -2,13 +2,6 @@ package SeqFile;
 
 import java.io.EOFException;
 import java.io.File;
-import java.io.FileInputStream;
- import java.io.FileOutputStream;
- import java.io.ObjectInputStream;
- import java.io.ObjectOutputStream;
-
-
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
@@ -22,7 +15,7 @@ public class RandomAcFile {
     static List<IndexStudent> indexStudents = new ArrayList<>();
 
     static final int BLOCK_SIZE = 10;
-    static final int FILE_SOURCES = 4;
+    static final int QTD_FILE_SOURCES = 4;
 
     // Cria um novo aluno (registro de tamanho fixo)
     public static FixedSizeStudent createStudent(Scanner input) {
@@ -191,6 +184,194 @@ public class RandomAcFile {
         }
     }
 
+    // Intercalação balanceada de vários caminhos
+    public static File sortFile2(File file) throws IOException {
+        RandomAccessFile studentsData = new RandomAccessFile(file, "r");
+
+        // Serão 4 arquivos fonte
+        File[] files1 = { new File("0.ord"), new File("1.ord"), new File("2.ord"), new File("3.ord") };
+        File[] files2 = { new File("4.ord"), new File("5.ord"), new File("6.ord"), new File("7.ord") };
+
+        int[] posNextStudentsFiles1 = {0,0,0,0};
+        int[] posNextStudentsFiles2 = {0,0,0,0};
+
+        // arquivo ordenado que será retornado
+        File sortedFile = null;
+
+        double numberOfStudents = file.length() / FixedSizeStudent.DATASIZE;
+        int nextStudent = 0;
+
+        //numero de passadas nos dados
+        int turn = 0;
+
+        // arquivos para leitura em blocos
+        File[] initialFiles;
+
+        // arquivos para intercalacao dos blocos gerados
+        File[] finalFiles;
+
+        //posicao do proximo aluno nao lido
+        int[] posNextStudents = new int[4];
+
+        boolean sortFinished = false;
+
+        //enquanto o arquivo nao acabar...
+        // while(!sortFinished){}
+
+        if(turn % 2 == 0){
+            initialFiles = files1;
+            finalFiles = files2;
+
+            posNextStudents = posNextStudentsFiles1;
+        } else {
+            initialFiles = files2;
+            finalFiles = files1;
+
+            posNextStudents = posNextStudentsFiles2;
+        }
+        
+        int[] numberBlocksPerFile = {0,0,0,0};
+
+        for(int i = 0, step = 0; i < numberOfStudents; i = nextStudent, step++){
+
+            nextStudent = i + BLOCK_SIZE;
+
+            File fileOrd = initialFiles[step % QTD_FILE_SOURCES];
+
+            //arquivo com bloco ordenado
+            RandomAccessFile dataOrd = new RandomAccessFile(fileOrd, "rw");
+
+            //sempre comecando a preencher do final do arquivo
+            dataOrd.seek(fileOrd.length());
+
+            List<FixedSizeStudent> list = new ArrayList<>();
+
+            for (int j = i; j < nextStudent; j++) {
+                int pos = j * FixedSizeStudent.DATASIZE;
+
+                studentsData.seek(pos);
+
+                FixedSizeStudent student = null;
+                try {
+                    student = FixedSizeStudent.readData(studentsData);
+                    list.add(student);
+                } catch (EOFException e) {
+                    student = null;
+                }
+            }
+
+            //ordanacao da lista pelo nome
+            list = list.stream().sorted(Comparator.comparing(FixedSizeStudent::getName)).collect(Collectors.toList());
+
+            list.forEach((s) -> {
+                try {
+                    s.saveData(dataOrd);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            });
+
+            //salvando usuario nulo como flag para fim do bloco
+            FixedSizeStudent studentFlag = new FixedSizeStudent("", -1, -1);
+            try {
+                studentFlag.saveData(dataOrd);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            numberBlocksPerFile[step % QTD_FILE_SOURCES]++;
+
+        } //fim do loop para a gravacao dos primeiros blocos
+
+
+        //loop para saber quantos blocos tem o arquivo com o maior numero de blocos
+        int maxNumBlocks = -1;
+        for(int i = 0; i < QTD_FILE_SOURCES; i++){
+            if(numberBlocksPerFile[i] > maxNumBlocks)
+                maxNumBlocks = numberBlocksPerFile[i];
+        }
+
+        //o arquivo com o maior numero de blocos vai ditar o numero de repeticoes
+        for(int i = 0; i < maxNumBlocks; i++){
+
+            File fileSorted = finalFiles[i % QTD_FILE_SOURCES];
+            RandomAccessFile dataSorted = new RandomAccessFile(fileSorted, "rw");
+            dataSorted.seek(fileSorted.length());
+
+            int finishedGroupBlocks = 0;
+            int fileIndex = 0;
+
+            //enquanto o bloco de cada arquivo nao for finalizado
+            while(finishedGroupBlocks < QTD_FILE_SOURCES){
+
+                FixedSizeStudent smallerStudent = null;
+
+                for(int j = 0; j < QTD_FILE_SOURCES; j++){
+                    File readFile = initialFiles[j % QTD_FILE_SOURCES];
+                    RandomAccessFile readData = new RandomAccessFile(readFile, "r");
+
+                    readData.seek(posNextStudents[j] * FixedSizeStudent.DATASIZE);
+
+                    FixedSizeStudent student = null;
+                    try {
+                        student = FixedSizeStudent.readData(readData);
+
+                        if(student == null || (student != null && student.id == -1)){
+                            finishedGroupBlocks++;
+                            continue;
+                        }
+                        
+                        if (smallerStudent == null && student != null) {
+                            smallerStudent = student;
+                            posNextStudents[j]++;
+                        }
+
+                        if (student != null && student.id != -1
+                            && smallerStudent != null && smallerStudent.id != -1) {
+
+                            if(student.name.compareTo(smallerStudent.name) < 0){
+                                smallerStudent = student;
+                                posNextStudents[j]++;
+                            }
+
+                        }
+
+
+                    } catch (EOFException e) {
+                        student = null;
+                    }
+
+                }
+
+                if(smallerStudent != null){
+                    smallerStudent.saveData( dataSorted );
+                }
+
+                fileIndex++;
+
+            }
+
+            new FixedSizeStudent("", -1, -1).saveData(dataSorted);
+
+        }
+
+
+
+        turn++;
+
+        return sortedFile;
+    }
+
+
+
+
+
+
+
+
+
+    
+
     //Ordena o arquivo com os alunos
     //Passar o arquivo desordenado como parametro
     public static File sortFile(File file) throws IOException {
@@ -209,7 +390,7 @@ public class RandomAcFile {
         int nextBlock = BLOCK_SIZE;
 
         //total de passadas no arquivo
-        int totalSteps = logb((int) Math.ceil(numberOfStudents/BLOCK_SIZE), FILE_SOURCES);
+        int totalSteps = logb((int) Math.ceil(numberOfStudents/BLOCK_SIZE), QTD_FILE_SOURCES);
 
         for(int step = 0; step < totalSteps; step++){
 
@@ -226,7 +407,7 @@ public class RandomAcFile {
 
             for(int i = 0, countSteps = 0; i < numberOfStudents; i = nextBlock - BLOCK_SIZE , countSteps++){
 
-                File fileOrd = initialFiles[countSteps % FILE_SOURCES];
+                File fileOrd = initialFiles[countSteps % QTD_FILE_SOURCES];
                 RandomAccessFile dataOrd = new RandomAccessFile(fileOrd, "rw");
     
                 List<FixedSizeStudent> list = new ArrayList<>();
@@ -264,6 +445,10 @@ public class RandomAcFile {
             }
 
 
+            //TESTEEEEEE
+
+            
+
             //Quando todos os arquivos forem totalmente revistos, o loop acaba.
             int filesFinished = 0;
 
@@ -271,11 +456,11 @@ public class RandomAcFile {
             //inicialmente comecando do zero
             int[] vectorPos = {0,0,0,0};
 
-            while(filesFinished < FILE_SOURCES){
+            while(filesFinished < QTD_FILE_SOURCES){
 
                 double biggerNumberOfBlock = 0;
 
-                for(int i = 0; i < FILE_SOURCES; i++){
+                for(int i = 0; i < QTD_FILE_SOURCES; i++){
 
                     double value = (initialFiles[i].length() / FixedSizeStudent.DATASIZE) / BLOCK_SIZE;
                     if(value > biggerNumberOfBlock){
@@ -283,24 +468,24 @@ public class RandomAcFile {
                     } 
                 }
 
-                for(int countSteps = 0; countSteps < numberOfStudents / (BLOCK_SIZE * FILE_SOURCES); countSteps++){
-                    File fileOrd = finalFiles[countSteps % FILE_SOURCES];
+                for(int countSteps = 0; countSteps < numberOfStudents / (BLOCK_SIZE * QTD_FILE_SOURCES); countSteps++){
+                    File fileOrd = finalFiles[countSteps % QTD_FILE_SOURCES];
                     RandomAccessFile dataOrd = new RandomAccessFile(fileOrd, "rw");
 
-                    FixedSizeStudent[] vectorStudents = new FixedSizeStudent[BLOCK_SIZE * FILE_SOURCES];
-                    FixedSizeStudent[] vAux = new FixedSizeStudent[FILE_SOURCES];
+                    FixedSizeStudent[] vectorStudents = new FixedSizeStudent[BLOCK_SIZE * QTD_FILE_SOURCES];
+                    FixedSizeStudent[] vAux = new FixedSizeStudent[QTD_FILE_SOURCES];
 
                     //loop para todos os blocos que tem no maior arquivo.
                     for(int k = 0; k < biggerNumberOfBlock; k++){
 
                         //loop um bloco de cada arquivo... se tem 4 arquivo e ta 10 alunos por bloco, será 40 repeticoes
-                        for(int j = 0; j < BLOCK_SIZE * FILE_SOURCES; j++){
+                        for(int j = 0; j < BLOCK_SIZE * QTD_FILE_SOURCES; j++){
     
                             FixedSizeStudent lessStudent = vAux[0];
                             int posLessStudent = 0;
     
     
-                            for(int i=0; i < FILE_SOURCES; i++){
+                            for(int i=0; i < QTD_FILE_SOURCES; i++){
                                 RandomAccessFile data = new RandomAccessFile(initialFiles[i], "r");
         
                                 data.seek(vectorPos[i]);
@@ -321,7 +506,7 @@ public class RandomAcFile {
                             }
         
                             
-                            for(int i=0; i < FILE_SOURCES; i++){
+                            for(int i=0; i < QTD_FILE_SOURCES; i++){
         
                                 if( vAux[i] != null 
                                     && vAux[i].name != null
@@ -340,7 +525,7 @@ public class RandomAcFile {
         
                         }
     
-                        for(int i=0; i < BLOCK_SIZE * FILE_SOURCES; i++){
+                        for(int i=0; i < BLOCK_SIZE * QTD_FILE_SOURCES; i++){
                             vectorStudents[i].saveData(dataOrd);
                         }
                     }
@@ -362,9 +547,12 @@ public class RandomAcFile {
                 break;
             }
 
+            
+
         }
 
         return sortedFile;
+
 
     }
 
@@ -380,7 +568,7 @@ public class RandomAcFile {
 
         loadIndex(arqIndex);
 
-        //sortFile(arqDados);
+        sortFile2(arqDados);
 
         //textFileToBinaryFile(arqTexto, arqDados);
 
