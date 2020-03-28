@@ -2,7 +2,6 @@ package SeqFile;
 
 import java.io.EOFException;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
@@ -19,38 +18,7 @@ public class RandomAcFile {
     static final int QTD_FILE_SOURCES = 4;
     static final String LAST_STUDENT_NAME = "ZZZZZZZZZZZZZZZ";
 
-    // Cria um novo aluno (registro de tamanho fixo)
-    public static FixedSizeStudent createStudent(Scanner input) {
-        System.out.print("Name: ");
-        String name = input.nextLine();
-
-        System.out.print("Id: ");
-        int id = input.nextInt();
-
-        System.out.print("Grade: ");
-        float grade = input.nextFloat();
-        input.nextLine();
-        return new FixedSizeStudent(name, id, grade);
-    }
-
-    // método para iterar e criar diversos estudantes. Utiliza writeObject para
-    // persistir o dado no disco, de forma sequencial
-    public static void createFile(Scanner input, File file) throws IOException {
-        RandomAccessFile studentData = new RandomAccessFile(file, "rw");
-        studentData.seek(file.length());
-
-        char oneMore = 'y';
-        FixedSizeStudent auxStudent;
-
-        while (oneMore == 'y') {
-            auxStudent = createStudent(input); // cria o estudante (método acima)
-            auxStudent.saveData(studentData);
-            System.out.print("One more (y/n)? ");
-            oneMore = input.nextLine().charAt(0); // para terminar, 'y/n' para criar novo aluno(leitura do teclado)
-        }
-        studentData.close();
-    }
-
+    // Procura o aluno pela sua posição no arquivo.
     public static FixedSizeStudent loadData(File file, int pos) throws IOException, ClassNotFoundException {
 
         RandomAccessFile studentData = new RandomAccessFile(file, "r");
@@ -138,6 +106,8 @@ public class RandomAcFile {
         studentIndex.close();
     }
 
+    // Encontrar o aluno passando como parametro a matricula dele...
+    // Esse método usa o indice para encontrar o aluno
     public static FixedSizeStudent findStudentById(int id, File file) throws IOException, ClassNotFoundException {
         RandomAccessFile studentData = new RandomAccessFile(file, "r");
 
@@ -159,6 +129,7 @@ public class RandomAcFile {
         return student;
     }
 
+    // Encontra a posicao do aluno no arquivo principal, utilizando o indice
     public static int findPositionStudent(int id) {
         List<IndexStudent> indexes = indexStudents.stream().filter((student) -> student.id == id)
                 .collect(Collectors.toList());
@@ -169,7 +140,7 @@ public class RandomAcFile {
         return indexStudent.pos;
     }
 
-    // Carregando indice para a memoria principal
+    // Carrega arquivo de indice para a memoria principal
     public static void loadIndex(File file) throws IOException {
         RandomAccessFile indexData = new RandomAccessFile(file, "r");
 
@@ -191,6 +162,7 @@ public class RandomAcFile {
     }
 
     // Intercalação balanceada de vários caminhos
+    // Ordenacao externa do arquivo principal
     public static File sortFile(File file) throws IOException {
 
         clearContentAuxFiles();
@@ -207,6 +179,7 @@ public class RandomAcFile {
         double numberOfStudents = file.length() / FixedSizeStudent.DATASIZE;
         int nextStudent = 0;
 
+        // Esse tamanho será utilizado para saber quando a ordenacao acabou
         double originalFileLength = file.length();
 
         // arquivos para leitura em blocos
@@ -290,7 +263,7 @@ public class RandomAcFile {
                 clean.close();
             }
 
-            // Continuacao da intercalacao
+            // varivavel do ponteiro de posicoes para os arquivos de leitura
             int[] positionFiles2 = { 0, 0, 0, 0 };
 
             double biggerFileLength = initialFiles[0].length();
@@ -308,6 +281,7 @@ public class RandomAcFile {
                 // arquivo com intercalacao de blocos ordenados
                 RandomAccessFile ord = new RandomAccessFile(finalFiles[i % QTD_FILE_SOURCES], "rw");
 
+                // Sempre no final do arquivo
                 ord.seek(finalFiles[i % QTD_FILE_SOURCES].length());
 
                 int numberOfEndBlock = 0;
@@ -364,10 +338,14 @@ public class RandomAcFile {
                     e.printStackTrace();
                 }
 
+                // Pulando o aluno flag de todos os arquivos para a proxima intercalacao
                 for (int j = 0; j < QTD_FILE_SOURCES; j++) {
                     positionFiles2[j]++;
                 }
 
+                // Se o arquivo atual for maior ou igual ao arquivo original é porque todos os
+                // alunos ja estao naquele arquivo, entao ele ja está ordenado com todos os
+                // alunos
                 if (finalFiles[i % QTD_FILE_SOURCES].length() >= originalFileLength) {
                     sortedFile = finalFiles[i % QTD_FILE_SOURCES];
                     filesFinished = true;
@@ -404,7 +382,7 @@ public class RandomAcFile {
         }
     }
 
-    // Mostrando relatorio paginado
+    // Mostrando relatorio, paginando de 20 em 20 alunos
     public static void showContentFilePaged(File file, int startPosition) throws IOException {
 
         Scanner scanner = new Scanner(System.in);
