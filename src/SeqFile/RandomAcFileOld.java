@@ -2,7 +2,6 @@ package SeqFile;
 
 import java.io.EOFException;
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.util.ArrayList;
@@ -11,7 +10,7 @@ import java.util.List;
 import java.util.Scanner;
 import java.util.stream.Collectors;
 
-public class RandomAcFile {
+public class RandomAcFileOld {
 
     static List<IndexStudent> indexStudents = new ArrayList<>();
 
@@ -99,13 +98,11 @@ public class RandomAcFile {
         RandomAccessFile studentData = new RandomAccessFile(file, "r");
 
         RandomAccessFile studentIndex = new RandomAccessFile(indexFile, "rw");
-        // Esvaziando arquivo de indice
-        studentIndex.setLength(0);
+
+        List<FixedSizeStudent> students = new ArrayList<>();
 
         // calculo do numero de alunos
         double numberOfStudents = file.length() / FixedSizeStudent.DATASIZE;
-
-        indexStudents = new ArrayList<>();
 
         for (int i = 0; i < numberOfStudents; i++) {
 
@@ -116,11 +113,18 @@ public class RandomAcFile {
             FixedSizeStudent student = null;
             try {
                 student = FixedSizeStudent.readData(studentData);
-                indexStudents.add(new IndexStudent(student.id, pos));
+                students.add(student);
             } catch (EOFException e) {
                 student = null;
             }
 
+        }
+
+        // criacao dos indices do aluno
+        for (int i = 0; i < numberOfStudents; i++) {
+
+            int pos = i * FixedSizeStudent.DATASIZE;
+            indexStudents.add(new IndexStudent(students.get(i).id, pos));
         }
 
         // ordenacao crescente pelo id do aluno
@@ -141,12 +145,14 @@ public class RandomAcFile {
     public static FixedSizeStudent findStudentById(int id, File file) throws IOException, ClassNotFoundException {
         RandomAccessFile studentData = new RandomAccessFile(file, "r");
 
-        int positionStudent = findPositionStudent(id);
-        if (positionStudent == -1) {
+        List<IndexStudent> indexes = indexStudents.stream().filter((student) -> student.id == id)
+                .collect(Collectors.toList());
+        if (indexes.isEmpty()) {
             return null;
         }
+        IndexStudent indexStudent = indexes.get(0);
 
-        studentData.seek(positionStudent);
+        studentData.seek(indexStudent.pos);
         FixedSizeStudent student = null;
         try {
             student = FixedSizeStudent.readData(studentData);
@@ -157,16 +163,6 @@ public class RandomAcFile {
 
         studentData.close();
         return student;
-    }
-
-    public static int findPositionStudent(int id) {
-        List<IndexStudent> indexes = indexStudents.stream().filter((student) -> student.id == id)
-                .collect(Collectors.toList());
-        if (indexes.isEmpty()) {
-            return -1;
-        }
-        IndexStudent indexStudent = indexes.get(0);
-        return indexStudent.pos;
     }
 
     // Carregando indice para a memoria principal
@@ -191,10 +187,7 @@ public class RandomAcFile {
     }
 
     // Intercalação balanceada de vários caminhos
-    public static File sortFile(File file) throws IOException {
-
-        clearContentAuxFiles();
-
+    public static File sortFile2(File file) throws IOException {
         RandomAccessFile studentsData = new RandomAccessFile(file, "r");
 
         // Serão 4 arquivos fonte
@@ -256,7 +249,7 @@ public class RandomAcFile {
             });
 
             // salvando usuario nulo como flag para fim do bloco
-            FixedSizeStudent studentFlag = new FixedSizeStudent(LAST_STUDENT_NAME, -1, -1);
+            FixedSizeStudent studentFlag = new FixedSizeStudent("", -1, -1);
             try {
                 studentFlag.saveData(dataOrd);
             } catch (IOException e) {
@@ -269,18 +262,96 @@ public class RandomAcFile {
 
         studentsData.close();
 
-        // Iniciando intercalação
+        // Geração dos primeiros blocos
+
+        int[] positionFiles = { 0, 0, 0, 0 };
+
+        double biggerFileLength = initialFiles[0].length();
+
+        for (int i = 1; i < QTD_FILE_SOURCES; i++) {
+            if (initialFiles[i].length() > biggerFileLength) {
+                biggerFileLength = initialFiles[i].length();
+            }
+        }
+
+        double biggerNumberOfBlocks = (biggerFileLength / FixedSizeStudent.DATASIZE) / BLOCK_SIZE;
+
+        for (int i = 0; i < biggerNumberOfBlocks; i++) {
+
+            // arquivo com intercalacao de blocos ordenados
+            RandomAccessFile ord = new RandomAccessFile(finalFiles[i % QTD_FILE_SOURCES], "rw");
+
+            ord.seek(finalFiles[i % QTD_FILE_SOURCES].length());
+
+            int numberOfEndBlock = 0;
+
+            // Fazendo a primeira intercalacao dos arquivos...
+            while (numberOfEndBlock < QTD_FILE_SOURCES) {
+
+                FixedSizeStudent actualStudent;
+                FixedSizeStudent firstStudent = new FixedSizeStudent(LAST_STUDENT_NAME, -1, -1);
+                int positionFirstStudent = -1;
+
+                for (int j = 0; j < QTD_FILE_SOURCES; j++) {
+                    RandomAccessFile read = new RandomAccessFile(initialFiles[j], "r");
+                    read.seek(positionFiles[j] * FixedSizeStudent.DATASIZE);
+
+                    try {
+                        actualStudent = FixedSizeStudent.readData(read);
+                    } catch (EOFException e) { // para quando terminar os dados do arquivo
+                        actualStudent = null;
+                    }
+
+                    if (actualStudent != null && actualStudent.id == -1) {
+                        numberOfEndBlock++;
+                    }
+
+                    if (actualStudent == null || actualStudent.id == -1) {
+                        continue;
+                    }
+
+                    if (actualStudent.name.compareTo(firstStudent.name) < 0) {
+                        firstStudent = actualStudent;
+                        positionFirstStudent = j;
+                    }
+
+                    read.close();
+                }
+
+                if (firstStudent.id != -1 && positionFirstStudent != -1) {
+                    positionFiles[positionFirstStudent]++;
+                    firstStudent.saveData(ord);
+                }
+
+            }
+
+            // salvando usuario nulo como flag para fim do bloco
+            FixedSizeStudent studentFlag = new FixedSizeStudent("", -1, -1);
+            try {
+                studentFlag.saveData(ord);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+
+            for (int j = 0; j < QTD_FILE_SOURCES; j++) {
+                positionFiles[j]++;
+            }
+
+            ord.close();
+
+        }
+
         boolean filesFinished = false;
         int count = 0;
 
         while (!filesFinished) {
 
             if (count % 2 == 0) {
-                initialFiles = files1;
-                finalFiles = files2;
-            } else {
                 initialFiles = files2;
                 finalFiles = files1;
+            } else {
+                initialFiles = files1;
+                finalFiles = files2;
             }
 
             // LIMPANDO TODOS OS ARQUIVOS QUE VAO RECEBER OS NOVOS DADOS.
@@ -293,7 +364,7 @@ public class RandomAcFile {
             // Continuacao da intercalacao
             int[] positionFiles2 = { 0, 0, 0, 0 };
 
-            double biggerFileLength = initialFiles[0].length();
+            biggerFileLength = initialFiles[0].length();
 
             for (int i = 1; i < QTD_FILE_SOURCES; i++) {
                 if (initialFiles[i].length() > biggerFileLength) {
@@ -301,7 +372,7 @@ public class RandomAcFile {
                 }
             }
 
-            double biggerNumberOfBlocks = (biggerFileLength / FixedSizeStudent.DATASIZE) / BLOCK_SIZE;
+            biggerNumberOfBlocks = (biggerFileLength / FixedSizeStudent.DATASIZE) / BLOCK_SIZE;
 
             for (int i = 0; i < biggerNumberOfBlocks; i++) {
 
@@ -357,7 +428,7 @@ public class RandomAcFile {
                 });
 
                 // salvando usuario nulo como flag para fim do bloco
-                FixedSizeStudent studentFlag = new FixedSizeStudent(LAST_STUDENT_NAME, -1, -1);
+                FixedSizeStudent studentFlag = new FixedSizeStudent("", -1, -1);
                 try {
                     studentFlag.saveData(ord);
                 } catch (IOException e) {
@@ -386,71 +457,45 @@ public class RandomAcFile {
         return sortedFile;
     }
 
-    // Apagar conteudo dos arquivos auxiliares para ordenacao
-    public static void clearContentAuxFiles() {
-        File[] files = { new File("0.ord"), new File("1.ord"), new File("2.ord"), new File("3.ord"), new File("4.ord"),
-                new File("5.ord"), new File("6.ord"), new File("7.ord") };
-
-        for (int i = 0; i < 8; i++) {
-            RandomAccessFile clean;
-            try {
-                clean = new RandomAccessFile(files[i], "rw");
-                clean.setLength(0);
-                clean.close();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-
-        }
-    }
-
-    // Mostrando relatorio paginado
-    public static void showContentFilePaged(File file, int startPosition) throws IOException {
-
-        Scanner scanner = new Scanner(System.in);
-
-        RandomAccessFile read = new RandomAccessFile(file, "r");
-
-        String nextPage = "";
-
-        do {
-
-            for (int i = 0; i < 20; i++) {
-
-                read.seek(startPosition);
-                FixedSizeStudent student;
-                try {
-                    student = FixedSizeStudent.readData(read);
-
-                    if (student.id != -1)
-                        System.out.println(student);
-
-                } catch (EOFException e) { // para quando terminar os dados do arquivo
-                    student = null;
-                }
-
-                startPosition += FixedSizeStudent.DATASIZE;
-
-            }
-
-            System.out.print("Próxima página? (y/n): ");
-            nextPage = scanner.nextLine();
-        } while ("y".equals(nextPage));
-
-        read.close();
-    }
-
     public static void main(String[] args) throws Exception {
 
         File arqDados = new File("alumni.dat");
         File arqTexto = new File("dadosTeste.txt");
         File arqIndex = new File("indexId.dat");
-        File sortedFile = null;
-
-        boolean fileSorted = false;
-        boolean indexUpdated = false;
 
         loadIndex(arqIndex);
+
+        File sortedFile = sortFile2(arqDados);
+
+        double quantStudents = sortedFile.length() / FixedSizeStudent.DATASIZE;
+
+        System.out.println("-------------------- COMECANDO A MOSTRAR ARQUIVO --------------------");
+
+        RandomAccessFile read = new RandomAccessFile(sortedFile, "r");
+
+        for (int i = 0; i < quantStudents; i++) {
+            read.seek(i * FixedSizeStudent.DATASIZE);
+            FixedSizeStudent student;
+            try {
+                student = FixedSizeStudent.readData(read);
+
+                if (student.id != -1)
+                    System.out.println(student);
+                else
+                    System.out.println("---------------- ALUNO FLAG ----------------");
+
+            } catch (EOFException e) { // para quando terminar os dados do arquivo
+                student = null;
+            }
+        }
+
+        read.close();
+
+        System.out.println("---------------- TERMINANDO ARQUIVO ----------------");
+
+        // textFileToBinaryFile(arqTexto, arqDados);
+
+        // createIndexFile(arqDados, arqIndex);
 
         FixedSizeStudent auxStudent;
         Scanner leitor = new Scanner(System.in);
@@ -462,8 +507,7 @@ public class RandomAcFile {
             System.out.println("2 - Criar indice do arquivo");
             System.out.println("3 - Ler um registro pela posicao");
             System.out.println("4 - Ler um registro pela matricula");
-            System.out.println("5 - Exibir relatório de alunos ordenados");
-            System.out.println("6 - Sair");
+            System.out.println("5 - Sair");
             opcao = leitor.nextInt();
             leitor.nextLine();
             switch (opcao) {
@@ -494,43 +538,8 @@ public class RandomAcFile {
                         System.out.println("Aluno nao encontrado!!");
                     System.out.println();
                     break;
-                case 5:
-
-                    if (!fileSorted) {
-                        System.out.println("Ordenando arquivo...");
-                        sortedFile = sortFile(arqDados);
-                        arqDados = sortedFile;
-                        fileSorted = true;
-                    }
-
-                    if (sortedFile == null) {
-                        System.out.println("Ocorreu um erro ao ordenar arquivo!");
-                        break;
-                    }
-
-                    System.out.print("Deseja começar de uma matricula específica? (y/n): ");
-                    String resp = leitor.nextLine();
-                    if ("y".equals(resp)) {
-                        System.out.print("Digite a matricula de inicio: ");
-                        int idStudent = leitor.nextInt();
-
-                        if (!indexUpdated) {
-                            System.out.println("Atualizando indices...");
-                            createIndexFile(sortedFile, arqIndex);
-                            loadIndex(arqIndex);
-                            indexUpdated = true;
-                        }
-
-                        int position = findPositionStudent(idStudent);
-
-                        showContentFilePaged(sortedFile, position);
-
-                    } else {
-                        showContentFilePaged(sortedFile, 0);
-                    }
-                    break;
             }
-        } while (opcao != 6);
+        } while (opcao != 5);
         leitor.close();
 
     }
